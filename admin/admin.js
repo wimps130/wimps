@@ -10,6 +10,17 @@
     let loadedOrders = [];
     let bulkPlans = [];
     let bulkNumbers = [];
+    let dataMartWithdrawalLimits = null;
+    const dataMartPendingStorageKey = "wimps-datamart-withdrawal-pending";
+    let pendingDataMartWithdrawal = (() => {
+        try {
+            const saved = JSON.parse(sessionStorage.getItem(dataMartPendingStorageKey) || "null");
+            return saved?.fingerprint && saved?.idempotencyKey && saved?.draft ? saved : null;
+        } catch (error) {
+            return null;
+        }
+    })();
+    let dataMartWithdrawalInProgress = false;
     const adminApiBase = window.APP_CONFIG?.API_BASE || ((/localhost|127\.0\.0\.1/.test(window.location.hostname) || window.location.protocol === "file:") ? "http://localhost:5000/api" : "/api");
     let adminToken = sessionStorage.getItem("wimps-admin-token") || "";
 
@@ -54,6 +65,10 @@
         if (adminToken && selected === "payments") loadPayments().catch((error) => showToast(error.message));
         if (adminToken && selected === "checkers") loadCheckers().catch((error) => showToast(error.message));
         if (adminToken && selected === "wimp") loadWimpData().catch((error) => showToast(error.message));
+        if (adminToken && selected === "wallets") {
+            loadProviders().catch((error) => showToast(error.message));
+            loadDataMartWithdrawals();
+        }
     }
 
     document.querySelectorAll("[data-view]").forEach((element) => {
@@ -147,6 +162,24 @@
     document.getElementById("orders-network")?.addEventListener("change", renderOrders);
     document.getElementById("bulk-network")?.addEventListener("change", loadBulkBundles);
     document.getElementById("chart-range")?.addEventListener("change", renderDashboard);
+    document.getElementById("datamart-withdrawal-form")?.addEventListener("submit", (event) => {
+        event.preventDefault();
+        createDataMartWithdrawal();
+    });
+    ["datamart-withdrawal-amount", "datamart-withdrawal-network", "datamart-withdrawal-phone", "datamart-withdrawal-name"].forEach((id) => {
+        document.getElementById(id)?.addEventListener("input", updateDataMartWithdrawalEstimate);
+        document.getElementById(id)?.addEventListener("change", updateDataMartWithdrawalEstimate);
+    });
+    document.getElementById("refresh-datamart-withdrawals")?.addEventListener("click", () => {
+        loadDataMartWithdrawals();
+    });
+    if (pendingDataMartWithdrawal?.draft) {
+        document.getElementById("datamart-withdrawal-amount").value = pendingDataMartWithdrawal.draft.amount;
+        document.getElementById("datamart-withdrawal-network").value = pendingDataMartWithdrawal.draft.network;
+        document.getElementById("datamart-withdrawal-phone").value = pendingDataMartWithdrawal.draft.phoneNumber;
+        document.getElementById("datamart-withdrawal-name").value = pendingDataMartWithdrawal.draft.recipientName || "";
+        document.getElementById("datamart-withdrawal-status").textContent = "A payout request may still be processing. Reusing these details will safely retry the same request.";
+    }
 
     async function loadAdminData(token) {
         adminToken = token;
@@ -237,6 +270,226 @@
             if (amount && Number.isFinite(Number(value?.amount))) amount.textContent = money(value.amount);
             if (status && value?.error) status.textContent = value.error;
         });
+    }
+
+    function unwrapDataMartResponse(payload) {
+        return payload?.data?.data ?? payload?.data ?? payload ?? {};
+    }
+
+    function withdrawalMoney(value) {
+        const amount = Number(value);
+        return Number.isFinite(amount) ? `GH₵ ${amount.toFixed(2)}` : "GH₵ —";
+    }
+
+    async function loadDataMartWithdrawals() {
+        if (!adminToken) return;
+        const form = document.getElementById("datamart-withdrawal-form");
+        const limitsStatus = document.getElementById("datamart-withdrawal-limits-status");
+        const formStatus = document.getElementById("datamart-withdrawal-status");
+        const historyBody = document.getElementById("datamart-withdrawals-body");
+        if (!form || !limitsStatus || !historyBody) return;
+
+        limitsStatus.textContent = "Loading withdrawal limits...";
+        form.querySelector("button[type=submit]").disabled = true;
+        try {
+            const response = await fetch(`${adminApiBase}/admin/datamart/withdrawals/limits`, {
+                headers: { "X-Admin-Token": adminToken }
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(payload.msg || "Unable to load DataMart withdrawal limits");
+            if (payload.status === "error") throw new Error(payload.message || "DataMart rejected the limits request");
+
+            dataMartWithdrawalLimits = unwrapDataMartResponse(payload);
+            const limits = dataMartWithdrawalLimits;
+            document.getElementById("datamart-withdrawal-balance").textContent = withdrawalMoney(limits.walletBalance);
+            document.getElementById("datamart-withdrawal-single-limit").textContent = withdrawalMoney(limits.singleTxnLimit);
+            document.getElementById("datamart-withdrawal-daily-remaining").textContent = withdrawalMoney(limits.todayRemaining);
+            limitsStatus.textContent = `Fee rate ${Number(limits.feePercent ?? 2)}%. Available for today's payouts: ${withdrawalMoney(limits.todayRemaining)}.`;
+            if (formStatus) formStatus.textContent = "Review the total debit and confirm before sending.";
+            updateDataMartWithdrawalEstimate();
+        } catch (error) {
+            dataMartWithdrawalLimits = null;
+            limitsStatus.textContent = error.message || "DataMart limits are unavailable. Confirm withdrawal access and signing-secret setup.";
+            if (formStatus) formStatus.textContent = "Payouts are disabled until DataMart limits can be verified.";
+            updateDataMartWithdrawalEstimate();
+        }
+
+        try {
+            const response = await fetch(`${adminApiBase}/admin/datamart/withdrawals?page=1&limit=20`, {
+                headers: { "X-Admin-Token": adminToken }
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(payload.msg || "Unable to load withdrawal history");
+            if (payload.status === "error") throw new Error(payload.message || "DataMart rejected the history request");
+            const result = unwrapDataMartResponse(payload);
+            renderDataMartWithdrawals(result.withdrawals || []);
+        } catch (error) {
+            historyBody.replaceChildren();
+            const row = document.createElement("tr");
+            const cell = document.createElement("td");
+            cell.colSpan = 7;
+            cell.textContent = error.message || "Withdrawal history is unavailable.";
+            row.append(cell);
+            historyBody.append(row);
+        }
+    }
+
+    function renderDataMartWithdrawals(withdrawals) {
+        const body = document.getElementById("datamart-withdrawals-body");
+        if (!body) return;
+        body.replaceChildren();
+        if (!Array.isArray(withdrawals) || withdrawals.length === 0) {
+            const row = document.createElement("tr");
+            const cell = document.createElement("td");
+            cell.colSpan = 7;
+            cell.textContent = "No DataMart withdrawals found.";
+            row.append(cell);
+            body.append(row);
+            return;
+        }
+
+        withdrawals.forEach((withdrawal) => {
+            const recipient = withdrawal.recipient || {};
+            const values = [
+                `${withdrawal.reference || "—"}${withdrawal.createdAt ? ` · ${new Date(withdrawal.createdAt).toLocaleString()}` : ""}`,
+                recipient.phone || withdrawal.phoneNumber || "—",
+                recipient.network || withdrawal.network || "—",
+                withdrawalMoney(withdrawal.amount),
+                withdrawalMoney(withdrawal.fee),
+                withdrawalMoney(withdrawal.totalCharged),
+                withdrawal.status || "Unknown"
+            ];
+            const row = document.createElement("tr");
+            values.forEach((value) => {
+                const cell = document.createElement("td");
+                cell.textContent = value;
+                row.append(cell);
+            });
+            body.append(row);
+        });
+    }
+
+    function getDataMartWithdrawalDraft() {
+        const amountInput = document.getElementById("datamart-withdrawal-amount");
+        const phoneInput = document.getElementById("datamart-withdrawal-phone");
+        const rawPhone = String(phoneInput?.value || "").replace(/[\s-]/g, "");
+        const phoneNumber = rawPhone.startsWith("+233") ? `0${rawPhone.slice(4)}` : rawPhone.startsWith("233") ? `0${rawPhone.slice(3)}` : rawPhone;
+        return {
+            amount: Number(amountInput?.value),
+            phoneNumber,
+            network: document.getElementById("datamart-withdrawal-network")?.value || "MTN",
+            recipientName: String(document.getElementById("datamart-withdrawal-name")?.value || "").trim()
+        };
+    }
+
+    function dataMartWithdrawalFingerprint(draft) {
+        return JSON.stringify({
+            amount: Number.isFinite(draft.amount) ? Number(draft.amount.toFixed(2)) : null,
+            phoneNumber: draft.phoneNumber,
+            network: draft.network,
+            recipientName: draft.recipientName
+        });
+    }
+
+    function updateDataMartWithdrawalEstimate() {
+        const draft = getDataMartWithdrawalDraft();
+        const limits = dataMartWithdrawalLimits;
+        const percent = Number(limits?.feePercent ?? 2);
+        const fee = Number.isFinite(draft.amount) && Number.isFinite(percent) ? Number((draft.amount * percent / 100).toFixed(2)) : NaN;
+        const total = Number.isFinite(draft.amount) && Number.isFinite(fee) ? Number((draft.amount + fee).toFixed(2)) : NaN;
+        document.getElementById("datamart-withdrawal-fee").textContent = withdrawalMoney(fee);
+        document.getElementById("datamart-withdrawal-total").textContent = withdrawalMoney(total);
+
+        const submit = document.getElementById("datamart-withdrawal-submit");
+        if (!submit) return;
+        const fingerprint = dataMartWithdrawalFingerprint(draft);
+        const uncertainDifferentDraft = pendingDataMartWithdrawal && pendingDataMartWithdrawal.fingerprint !== fingerprint;
+        const balance = Number(limits?.walletBalance);
+        const maxAmount = Number(limits?.singleTxnLimit);
+        const remaining = Number(limits?.todayRemaining);
+        const validAmount = Number.isFinite(draft.amount) && draft.amount >= 10 && Number.isFinite(fee);
+        const withinLimits = (!Number.isFinite(maxAmount) || draft.amount <= maxAmount)
+            && (!Number.isFinite(remaining) || draft.amount <= remaining)
+            && (!Number.isFinite(balance) || total <= balance);
+        const networkPrefixes = {
+            MTN: ["024", "025", "053", "054", "055", "059"],
+            TELECEL: ["020", "050"],
+            AIRTELTIGO: ["026", "027", "056", "057"]
+        };
+        const validPhone = (networkPrefixes[draft.network] || []).some((prefix) => draft.phoneNumber.startsWith(prefix));
+        submit.disabled = !limits || dataMartWithdrawalInProgress || !validAmount || !withinLimits || !validPhone || uncertainDifferentDraft;
+        submit.textContent = pendingDataMartWithdrawal && !uncertainDifferentDraft ? "Retry same payout" : "Send payout";
+
+        const status = document.getElementById("datamart-withdrawal-status");
+        if (status && uncertainDifferentDraft) {
+            status.textContent = "A previous request may still be processing. Restore the same details and retry safely, or refresh history before starting another payout.";
+        }
+    }
+
+    async function createDataMartWithdrawal() {
+        if (!adminToken) return showToast("Connect the admin API first.");
+        const form = document.getElementById("datamart-withdrawal-form");
+        if (!form?.reportValidity()) return;
+        const draft = getDataMartWithdrawalDraft();
+        const fingerprint = dataMartWithdrawalFingerprint(draft);
+        const feePercent = Number(dataMartWithdrawalLimits?.feePercent ?? 2);
+        const estimatedFee = Number((draft.amount * feePercent / 100).toFixed(2));
+        const estimatedDebit = Number((draft.amount + estimatedFee).toFixed(2));
+        if (!window.confirm(`Send GH₵ ${draft.amount.toFixed(2)} to ${draft.phoneNumber} on ${draft.network}? Estimated fee: GH₵ ${estimatedFee.toFixed(2)}. Estimated DataMart wallet debit: GH₵ ${estimatedDebit.toFixed(2)}.`)) return;
+
+        if (pendingDataMartWithdrawal && pendingDataMartWithdrawal.fingerprint !== fingerprint) {
+            return showToast("Resolve the previous payout with the same details before starting another one.");
+        }
+        if (!pendingDataMartWithdrawal) {
+            pendingDataMartWithdrawal = {
+                fingerprint,
+                idempotencyKey: window.crypto?.randomUUID?.() || `wimps-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                draft
+            };
+            try {
+                sessionStorage.setItem(dataMartPendingStorageKey, JSON.stringify(pendingDataMartWithdrawal));
+            } catch (error) {
+                showToast("Could not save the retry key for this payout. Keep this page open until its result is confirmed.");
+            }
+        }
+
+        const submit = document.getElementById("datamart-withdrawal-submit");
+        const status = document.getElementById("datamart-withdrawal-status");
+        dataMartWithdrawalInProgress = true;
+        if (submit) submit.disabled = true;
+        if (status) status.textContent = "Submitting payout securely...";
+        try {
+            const response = await fetch(`${adminApiBase}/admin/datamart/withdrawals`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-Admin-Token": adminToken,
+                    "X-Idempotency-Key": pendingDataMartWithdrawal.idempotencyKey
+                },
+                body: JSON.stringify(draft)
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok || payload.status === "error") {
+                if (response.status >= 400 && response.status < 500) {
+                    pendingDataMartWithdrawal = null;
+                    sessionStorage.removeItem(dataMartPendingStorageKey);
+                }
+                throw new Error(payload.msg || payload.message || "DataMart withdrawal failed");
+            }
+
+            const result = unwrapDataMartResponse(payload);
+            pendingDataMartWithdrawal = null;
+            sessionStorage.removeItem(dataMartPendingStorageKey);
+            if (status) status.textContent = `Payout ${result.status || "submitted"}. Reference: ${result.reference || "not returned"}. Amount: ${withdrawalMoney(result.amount ?? draft.amount)}; fee: ${withdrawalMoney(result.fee ?? estimatedFee)}; wallet debit: ${withdrawalMoney(result.totalCharged ?? estimatedDebit)}.`;
+            form.reset();
+            await Promise.all([loadProviders(), loadDataMartWithdrawals()]);
+            showToast("DataMart payout submitted.");
+        } catch (error) {
+            if (status) status.textContent = `${error.message || "Payout result is uncertain."} Retry the same details to safely check the original request.`;
+        } finally {
+            dataMartWithdrawalInProgress = false;
+            updateDataMartWithdrawalEstimate();
+        }
     }
 
     async function loadComparison() {

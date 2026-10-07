@@ -20,6 +20,18 @@
         .customer-email-form input:focus,
         .customer-email-form textarea:focus { border-color: var(--green); outline: 0; box-shadow: 0 0 0 3px rgba(8, 122, 85, .12); }
         .bulk-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+        .datamart-withdrawal-layout { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(280px, .7fr); gap: 16px; margin-top: 16px; }
+        .datamart-withdrawal-form { display: grid; align-content: start; gap: 15px; }
+        .datamart-withdrawal-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+        .datamart-withdrawal-form label { display: grid; gap: 7px; color: var(--muted); font-size: 11px; font-weight: 700; }
+        .datamart-withdrawal-form input,
+        .datamart-withdrawal-form select { width: 100%; min-width: 0; padding: 11px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); color: var(--ink); }
+        .datamart-withdrawal-note,.datamart-withdrawal-status { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+        .datamart-withdrawal-status { min-height: 18px; }
+        .datamart-withdrawal-history { margin-top: 16px; }
+        .datamart-withdrawal-history .panel-heading { align-items: center; }
+        @media (max-width: 860px) { .datamart-withdrawal-layout { grid-template-columns: minmax(0, 1fr); } }
+        @media (max-width: 560px) { .datamart-withdrawal-fields { grid-template-columns: minmax(0, 1fr); } }
     </style>
 </head>
 <body>
@@ -93,7 +105,37 @@
 
             <section class="view" data-panel="checkers"><div class="page-heading"><div><p class="eyebrow">DATAMART PRODUCTS</p><h1>Result checkers</h1><p class="muted">Review WAEC and BECE card stock before selling.</p></div><button class="primary-button" id="load-checkers-button" type="button">Refresh stock <span>↻</span></button></div><div class="checker-grid" id="checker-products"><div class="panel empty-state"><strong>Connect the admin API to load checker stock</strong><p>DataMart checker products will appear here.</p></div></div></section>
 
-<section class="view" data-panel="wallets"><div class="page-heading"><div><p class="eyebrow">FINANCIAL OVERVIEW</p><h1>Provider wallets</h1><p class="muted">Balances are read from documented provider APIs. Funding providers requires their supported top-up endpoint.</p></div><button class="primary-button" data-action="refresh">Refresh all balances <span>↻</span></button></div><div class="wallet-grid"><article class="wallet-card" data-wallet-provider="paystack"><span class="provider-badge paystack">P</span><div><h2>Paystack</h2><p>Available Paystack account balance.</p></div><strong>GH₵ —</strong><small>Refresh to retrieve</small></article><article class="wallet-card" data-wallet-provider="resellerxpress"><span class="provider-badge reseller">R</span><div><h2>Reseller</h2><p>Balance endpoint available through backend.</p></div><strong>GH₵ —</strong><small>Refresh to retrieve</small></article><article class="wallet-card" data-wallet-provider="remadata"><span class="provider-badge rema">R</span><div><h2>RemaData</h2><p>Balance endpoint available when key is configured.</p></div><strong>GH₵ —</strong><small>Refresh to retrieve</small></article><article class="wallet-card" data-wallet-provider="datamart"><span class="provider-badge datamart">D</span><div><h2>DataMart GH</h2><p>Shared wallet for data and checker products.</p></div><strong>GH₵ —</strong><small>Refresh to retrieve</small></article></div></section>
+<section class="view" data-panel="wallets">
+    <div class="page-heading"><div><p class="eyebrow">FINANCIAL OVERVIEW</p><h1>Provider wallets</h1><p class="muted">Only DataMart currently documents mobile-money payouts. Its fee is charged on top of the amount the recipient receives.</p></div><button class="primary-button" data-action="refresh">Refresh all balances <span>↻</span></button></div>
+    <div class="wallet-grid"><article class="wallet-card" data-wallet-provider="paystack"><span class="provider-badge paystack">P</span><div><h2>Paystack</h2><p>Available Paystack account balance.</p></div><strong>GH₵ —</strong><small>Refresh to retrieve</small></article><article class="wallet-card" data-wallet-provider="resellerxpress"><span class="provider-badge reseller">R</span><div><h2>Reseller</h2><p>Balance endpoint available through backend.</p></div><strong>GH₵ —</strong><small>Refresh to retrieve</small></article><article class="wallet-card" data-wallet-provider="remadata"><span class="provider-badge rema">R</span><div><h2>RemaData</h2><p>Balance endpoint available when key is configured.</p></div><strong>GH₵ —</strong><small>Refresh to retrieve</small></article><article class="wallet-card" data-wallet-provider="datamart"><span class="provider-badge datamart">D</span><div><h2>DataMart GH</h2><p>Shared wallet for data and checker products.</p></div><strong>GH₵ —</strong><small>Refresh to retrieve</small></article></div>
+    <div class="datamart-withdrawal-layout">
+        <form class="panel datamart-withdrawal-form" id="datamart-withdrawal-form">
+            <div><p class="eyebrow">DATAMART MOBILE MONEY</p><h2>Withdraw to a phone</h2></div>
+            <div class="datamart-withdrawal-fields">
+                <label>Amount to send (GHS)<input id="datamart-withdrawal-amount" name="amount" type="number" min="10" step="0.01" inputmode="decimal" required></label>
+                <label>Mobile network<select id="datamart-withdrawal-network" name="network" required><option value="MTN">MTN</option><option value="TELECEL">Telecel</option><option value="AIRTELTIGO">AirtelTigo</option></select></label>
+                <label>Mobile money number<input id="datamart-withdrawal-phone" name="phoneNumber" type="tel" inputmode="tel" autocomplete="tel" placeholder="0241234567" pattern="(?:0[0-9]{9}|[+]?233[0-9]{9})" required></label>
+                <label>Recipient name (optional)<input id="datamart-withdrawal-name" name="recipientName" type="text" autocomplete="name" maxlength="100"></label>
+            </div>
+            <p class="datamart-withdrawal-note">The amount entered goes to the recipient. DataMart charges its withdrawal fee in addition; the default fee is 2%. Withdrawals must be enabled for your API key by DataMart, with a signing secret configured on the server.</p>
+            <button class="primary-button" id="datamart-withdrawal-submit" type="submit" disabled>Send payout</button>
+            <p class="datamart-withdrawal-status" id="datamart-withdrawal-status" role="status" aria-live="polite">Load DataMart limits before withdrawing.</p>
+        </form>
+        <article class="panel datamart-withdrawal-summary">
+            <p class="eyebrow">LIVE PROVIDER LIMITS</p><h2>DataMart payout limits</h2>
+            <div class="summary-line"><span>DataMart wallet</span><strong id="datamart-withdrawal-balance">GH₵ —</strong></div>
+            <div class="summary-line"><span>Fee estimate</span><strong id="datamart-withdrawal-fee">GH₵ —</strong></div>
+            <div class="summary-line"><span>Total wallet debit</span><strong id="datamart-withdrawal-total">GH₵ —</strong></div>
+            <div class="summary-line"><span>Single payout max</span><strong id="datamart-withdrawal-single-limit">GH₵ —</strong></div>
+            <div class="summary-line"><span>Daily remaining</span><strong id="datamart-withdrawal-daily-remaining">GH₵ —</strong></div>
+            <p class="datamart-withdrawal-status" id="datamart-withdrawal-limits-status" role="status">Connect the admin API to load limits.</p>
+        </article>
+    </div>
+    <div class="table-panel datamart-withdrawal-history">
+        <div class="panel panel-heading"><div><p class="eyebrow">PAYOUT RECORDS</p><h2>Recent DataMart withdrawals</h2></div><button class="secondary-button" id="refresh-datamart-withdrawals" type="button">Refresh history</button></div>
+        <div class="responsive-table"><table><thead><tr><th>Reference / date</th><th>Recipient</th><th>Network</th><th>Amount</th><th>Fee</th><th>Total debit</th><th>Status</th></tr></thead><tbody id="datamart-withdrawals-body"><tr><td colspan="7">Connect the admin API to load withdrawal history.</td></tr></tbody></table></div>
+    </div>
+</section>
 
             <section class="view" data-panel="pricing"><div class="page-heading"><div><p class="eyebrow">REVENUE CONTROL</p><h1>Handling fees</h1><p class="muted">Set your profit separately for each network. Checkout uses the provider bundle price plus this fee.</p></div><button class="primary-button" data-action="save-settings">Save settings</button></div><div class="settings-grid"><form class="panel settings-form" id="pricing-form"><label class="switch-label">Automatic provider selection <input name="autoProvider" type="checkbox" checked><span class="switch"></span></label></form><article class="panel formula-panel"><p class="eyebrow">CURRENT FORMULA</p><h2>Provider price + handling fee</h2><p>Users pay the original provider bundle amount plus the handling fee set for its network.</p><div class="formula"><span>Provider price</span><b>+</b><span>Handling fee</span><b>=</b><strong>Checkout total</strong></div></article></div></section>
 
