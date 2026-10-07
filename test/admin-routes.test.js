@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const adminRouter = require('../routes/admin');
+const datamart = require('../services/datamart');
 
 const ADMIN_TOKEN = 'test-admin-token-0123456789abcdef';
 
@@ -68,6 +69,58 @@ test('admin routes return 503 when no admin token is configured', async () => {
   } finally {
     await new Promise((resolve) => server.close(resolve));
     if (previousToken !== undefined) process.env.ADMIN_API_TOKEN = previousToken;
+  }
+});
+
+test('DataMart withdrawal validates the MTN recipient before calling the provider', async () => {
+  const originalCreateWithdrawal = datamart.createWithdrawal;
+  const withdrawals = [];
+  datamart.createWithdrawal = async (input) => {
+    withdrawals.push(input);
+    return { status: 'success', data: { reference: 'test-withdrawal-reference', status: 'processing' } };
+  };
+
+  try {
+    await withAdminServer(async (baseUrl) => {
+      const headers = { 'X-Admin-Token': ADMIN_TOKEN, 'Content-Type': 'application/json', 'X-Idempotency-Key': 'admin-withdrawal-test-key' };
+      const invalid = await fetch(`${baseUrl}/datamart/withdrawals`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ amount: 10, phoneNumber: '0541234567', network: 'TELECEL' })
+      });
+      assert.equal(invalid.status, 400);
+      assert.equal(withdrawals.length, 0);
+
+      const valid = await fetch(`${baseUrl}/datamart/withdrawals`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ amount: 10.5, phoneNumber: '+233541234567', network: 'MTN', recipientName: 'Test recipient' })
+      });
+      assert.equal(valid.status, 200);
+      assert.equal(withdrawals.length, 1);
+      assert.deepEqual(withdrawals[0], {
+        amount: 10.5,
+        phoneNumber: '0541234567',
+        network: 'MTN',
+        recipientName: 'Test recipient',
+        clientRef: '',
+        idempotencyKey: 'admin-withdrawal-test-key'
+      });
+
+      datamart.createWithdrawal = async () => {
+        const error = new Error('DataMart request timed out');
+        error.status = 0;
+        throw error;
+      };
+      const uncertain = await fetch(`${baseUrl}/datamart/withdrawals`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ amount: 10, phoneNumber: '0541234567', network: 'MTN' })
+      });
+      assert.equal(uncertain.status, 503);
+    });
+  } finally {
+    datamart.createWithdrawal = originalCreateWithdrawal;
   }
 });
 

@@ -12,6 +12,7 @@ const { sendCustomerEmail } = require("../services/resend");
 const { readData, writeData } = require("../utils/fileDb");
 const { isFallback, readUsers, writeUsers, readTransactions, writeTransactions } = require("../utils/localStore");
 const { awardCompletedPurchase, reverseCompletedPurchaseReward } = require("../services/wimp");
+const { normalizePhone, validatePhone } = require("../utils/phoneValidation");
 
 const router = express.Router();
 
@@ -456,9 +457,30 @@ router.get("/datamart/withdrawals/:reference", async (req, res) => {
 
 router.post("/datamart/withdrawals", async (req, res) => {
   try {
-    return res.json(await datamart.createWithdrawal({ ...req.body, idempotencyKey: req.get("X-Idempotency-Key") }));
+    const body = req.body || {};
+    const amount = Number(body.amount);
+    const network = String(body.network || "").trim().toLowerCase();
+    const phoneNumber = normalizePhone(body.phoneNumber);
+    if (!Number.isFinite(amount) || amount < 10 || Math.abs(amount * 100 - Math.round(amount * 100)) > 0.000001) {
+      return res.status(400).json({ msg: "Withdrawal amount must be at least GHS 10 and use at most two decimal places" });
+    }
+    if (!["mtn", "telecel", "airteltigo"].includes(network)) {
+      return res.status(400).json({ msg: "Choose MTN, Telecel, or AirtelTigo for the withdrawal" });
+    }
+    const phoneError = validatePhone(phoneNumber, network);
+    if (phoneError) return res.status(400).json({ msg: phoneError });
+
+    return res.json(await datamart.createWithdrawal({
+      amount,
+      phoneNumber,
+      network: network.toUpperCase(),
+      recipientName: String(body.recipientName || "").trim(),
+      clientRef: String(body.clientRef || "").trim(),
+      idempotencyKey: req.get("X-Idempotency-Key")
+    }));
   } catch (error) {
-    return res.status(400).json({ msg: error.message || "Unable to create DataMart withdrawal" });
+    const status = error.status >= 400 && error.status < 500 ? 400 : 503;
+    return res.status(status).json({ msg: error.message || "Unable to create DataMart withdrawal" });
   }
 });
 

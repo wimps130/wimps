@@ -132,7 +132,9 @@ async function withdrawalRequest(method, path, data, idempotencyKey) {
     });
     return response.data;
   } catch (error) {
-    throw new Error(error.response?.data?.message || error.response?.data?.code || error.message || "DataMart withdrawal request failed");
+    const requestError = new Error(error.response?.data?.message || error.response?.data?.code || error.message || "DataMart withdrawal request failed");
+    requestError.status = Number(error.response?.status || 0);
+    throw requestError;
   }
 }
 
