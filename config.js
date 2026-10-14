@@ -1,5 +1,5 @@
 window.APP_CONFIG = window.APP_CONFIG || {};
-window.APP_CONFIG.API_BASE = "https://backend-o5q5.onrender.com/api";
+window.APP_CONFIG.API_BASE = "https://wimps-back-1.onrender.com/api";
 try {
 	document.documentElement.dataset.theme = localStorage.getItem("wimps-theme") === "dark" ? "dark" : "light";
 } catch (error) {
