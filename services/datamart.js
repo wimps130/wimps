@@ -112,6 +112,7 @@ function withdrawalBaseUrl() {
 
 async function withdrawalRequest(method, path, data, idempotencyKey) {
   if (!isConfigured()) throw new Error("DataMart API key is not configured");
+  if (!API_SECRET()) throw new Error("DM_API_SECRET is not configured");
   if (!SIGNING_SECRET()) throw new Error("DM_SIGNING_SECRET is not configured");
   const timestamp = String(Date.now());
   const rawBody = data === undefined ? "" : JSON.stringify(data);

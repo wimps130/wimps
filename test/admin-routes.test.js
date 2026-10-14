@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
+const axios = require('axios');
 const adminRouter = require('../routes/admin');
 const datamart = require('../services/datamart');
 
@@ -121,6 +122,46 @@ test('DataMart withdrawal validates the MTN recipient before calling the provide
     });
   } finally {
     datamart.createWithdrawal = originalCreateWithdrawal;
+  }
+});
+
+test('DataMart withdrawal sends its API secret and HMAC signature headers', async () => {
+  const envNames = ['DM_API_KEY', 'DM_API_SECRET', 'DM_SIGNING_SECRET'];
+  const previousEnv = Object.fromEntries(envNames.map((name) => [name, process.env[name]]));
+  const previousAdapter = axios.defaults.adapter;
+  let requestConfig;
+  process.env.DM_API_KEY = 'test-datamart-api-key';
+  process.env.DM_API_SECRET = 'test-datamart-api-secret';
+  process.env.DM_SIGNING_SECRET = 'test-datamart-signing-secret';
+  axios.defaults.adapter = async (config) => {
+    requestConfig = config;
+    return { data: { status: 'success' }, status: 200, statusText: 'OK', headers: {}, config };
+  };
+
+  try {
+    await datamart.createWithdrawal({
+      amount: 10,
+      phoneNumber: '0541234567',
+      network: 'MTN',
+      idempotencyKey: 'datamart-header-test-key'
+    });
+    assert.equal(requestConfig.headers['X-API-Key'], 'test-datamart-api-key');
+    assert.equal(requestConfig.headers['X-API-Secret'], 'test-datamart-api-secret');
+    assert.equal(requestConfig.headers['X-Idempotency-Key'], 'datamart-header-test-key');
+    assert.match(requestConfig.headers['X-Timestamp'], /^\d{13}$/);
+    assert.match(requestConfig.headers['X-Signature'], /^[a-f0-9]{64}$/);
+
+    delete process.env.DM_API_SECRET;
+    await assert.rejects(
+      datamart.createWithdrawal({ amount: 10, phoneNumber: '0541234567', network: 'MTN' }),
+      /DM_API_SECRET is not configured/
+    );
+  } finally {
+    axios.defaults.adapter = previousAdapter;
+    envNames.forEach((name) => {
+      if (previousEnv[name] === undefined) delete process.env[name];
+      else process.env[name] = previousEnv[name];
+    });
   }
 });
 
