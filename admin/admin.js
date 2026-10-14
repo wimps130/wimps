@@ -497,8 +497,8 @@
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.msg || "Unable to load comparison");
         const body = document.getElementById("comparison-body");
-        if (!body || !payload.data?.length) return;
-        comparisonPlans = payload.data;
+        if (!body) return;
+        comparisonPlans = Array.isArray(payload.data) ? payload.data : [];
         renderComparison();
         document.getElementById("comparison-updated").textContent = `Last verified update: ${new Date(payload.updatedAt || Date.now()).toLocaleTimeString()}`;
     }
@@ -633,7 +633,33 @@
             body.innerHTML = '<tr><td colspan="8"><div class="empty-state"><strong>No matching verified bundles</strong><p>Change the filters or connect more provider keys.</p></div></td></tr>';
             return;
         }
-        body.innerHTML = plans.map((plan) => `<tr><td><strong>${plan.network || "—"}</strong><br><small>${plan.name || plan.volume || "Bundle"}</small></td><td>${plan.provider === "resellerxpress" ? `GH₵ ${Number(plan.price).toFixed(2)}` : "—"}</td><td>${plan.provider === "remadata" ? `GH₵ ${Number(plan.price).toFixed(2)}` : "—"}</td><td>${plan.provider === "datamart" ? `GH₵ ${Number(plan.price).toFixed(2)}` : "—"}</td><td>GH₵ ${Number(plan.cost || plan.total).toFixed(2)}</td><td><strong>${plan.provider || "—"}</strong></td><td>GH₵ ${Number(plan.sellingPrice || 0).toFixed(2)}</td><td>GH₵ ${Number(plan.expectedProfit || 0).toFixed(2)}</td></tr>`).join("");
+        const bundles = new Map();
+        plans.forEach((plan) => {
+            const volumeGb = Number(plan.volumeGb);
+            const bundleKey = `${plan.network || ""}:${Number.isFinite(volumeGb) ? volumeGb.toFixed(3) : plan.name || plan.id}`;
+            if (!bundles.has(bundleKey)) bundles.set(bundleKey, { plans: [], providers: {} });
+            const bundle = bundles.get(bundleKey);
+            bundle.plans.push(plan);
+            const provider = plan.provider;
+            const providerPrice = Number(plan.price ?? plan.amount ?? plan.cost);
+            const previous = bundle.providers[provider];
+            if (!previous || providerPrice < Number(previous.price ?? previous.amount ?? previous.cost)) {
+                bundle.providers[provider] = plan;
+            }
+        });
+        const formatProviderPrice = (plan) => {
+            const price = Number(plan?.price ?? plan?.amount ?? plan?.cost);
+            return Number.isFinite(price) ? `GH₵ ${price.toFixed(2)}` : "—";
+        };
+        body.innerHTML = [...bundles.values()].map((bundle) => {
+            const winner = bundle.plans.reduce((best, plan) => {
+                const total = Number(plan.total ?? plan.cost ?? plan.price);
+                const bestTotal = Number(best.total ?? best.cost ?? best.price);
+                return total < bestTotal ? plan : best;
+            });
+            const totalCost = Number(winner.total ?? winner.cost ?? winner.price);
+            return `<tr><td><strong>${winner.network || "—"}</strong><br><small>${winner.name || winner.volume || "Bundle"}</small></td><td>${formatProviderPrice(bundle.providers.resellerxpress)}</td><td>${formatProviderPrice(bundle.providers.remadata)}</td><td>${formatProviderPrice(bundle.providers.datamart)}</td><td>GH₵ ${totalCost.toFixed(2)}</td><td><strong>${winner.provider || "—"}</strong></td><td>GH₵ ${Number(winner.sellingPrice || 0).toFixed(2)}</td><td>GH₵ ${Number(winner.expectedProfit || 0).toFixed(2)}</td></tr>`;
+        }).join("");
     }
 
     function renderOrders() {
