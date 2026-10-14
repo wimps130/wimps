@@ -38,6 +38,11 @@ async function loadPricingRules() {
   }
 }
 
+async function getSelectedProvider() {
+  await loadPricingRules();
+  return selectedProvider;
+}
+
 function isConfigured() {
   return Boolean(getApiKey());
 }
@@ -142,14 +147,18 @@ function normalizePlanRecord(plan, network, provider) {
     : DEFAULT_PROVIDER_FEE;
   const total = hasFee ? Number(plan.total ?? price + fee) : price + fee;
   const normalizedNetwork = normalizeNetwork(plan.network || network || "mtn");
-  const rawVolume = plan.volume_gb ?? plan.capacity_gb ?? plan.volume ?? plan.volume_mb ?? plan.volumeInMB ?? plan.capacity_mb ?? plan.capacity ?? plan.bundle_size ?? plan.data_size ?? plan.name;
+  const rawVolume = provider === "remadata"
+    ? plan.volume_gb ?? plan.capacity_gb ?? plan.volumeInMB ?? plan.volume_mb ?? plan.capacity_mb ?? plan.volume ?? plan.capacity ?? plan.bundle_size ?? plan.data_size ?? plan.name
+    : plan.volume_gb ?? plan.capacity_gb ?? plan.volume ?? plan.volume_mb ?? plan.volumeInMB ?? plan.capacity_mb ?? plan.capacity ?? plan.bundle_size ?? plan.data_size ?? plan.name;
   const volumeText = String(rawVolume ?? "").trim().toLowerCase();
   const volumeNumber = Number(volumeText.replace(/[^0-9.]/g, ""));
+  const mbPerGb = provider === "remadata" ? 1000 : 1024;
   const volumeGb = plan.volume_gb !== undefined || plan.capacity_gb !== undefined || volumeText.includes("gb")
     ? volumeNumber
     : plan.volume_mb !== undefined || plan.volumeInMB !== undefined || plan.capacity_mb !== undefined || volumeText.includes("mb")
-      ? volumeNumber / 1024
+      ? volumeNumber / mbPerGb
       : volumeNumber;
+  const remadataVolumeInMB = Number(plan.volumeInMB ?? plan.volume_mb ?? plan.capacity_mb ?? (volumeText.includes("mb") ? volumeNumber : NaN));
   const stableId = `${provider || "provider"}:${normalizedNetwork}:${volumeGb}`;
 
   return {
@@ -159,6 +168,7 @@ function normalizePlanRecord(plan, network, provider) {
     network: normalizedNetwork,
     volume: rawVolume ?? plan.data_size ?? plan.name ?? "Bundle",
     volumeGb,
+    ...(provider === "remadata" ? { providerVolumeInMB: Number.isFinite(remadataVolumeInMB) ? remadataVolumeInMB : Math.round(volumeGb * 1000) } : {}),
     price,
     fee,
     total,
@@ -235,7 +245,7 @@ async function getRemaDataPlans(network) {
       const normalized = normalizePlanRecord(plan, normalizedNetwork || network, "remadata");
       if (normalized.price > 0 || !Number.isFinite(normalized.volumeGb) || normalized.volumeGb < 1) return normalized;
 
-      const volumeInMB = Math.round(normalized.volumeGb * 1024);
+      const volumeInMB = normalized.providerVolumeInMB;
       try {
         const price = await getRemaDataCostPrice(normalized.network, volumeInMB);
         return normalizePlanRecord({ ...plan, price, total: Number((price + normalized.fee).toFixed(2)) }, normalized.network, "remadata");
@@ -444,7 +454,9 @@ async function placeProviderOrder(provider, input = {}) {
   const providerInput = {
     ref: input.request_id,
     phone: input.phone,
-    volumeInMB: volumeGb * 1024,
+    volumeInMB: Number(input.providerVolumeInMB) > 0
+      ? Number(input.providerVolumeInMB)
+      : volumeGb * (normalizedProvider === "remadata" ? 1000 : 1024),
     networkType: input.network
   };
 
@@ -539,7 +551,8 @@ async function getWalletBalance() {
   }
 
   const response = await axios.get(`${getBaseUrl()}/wallet-balance`, {
-    headers: getHeaders()
+    headers: getHeaders(),
+    timeout: 2500
   });
 
   return response.data;
@@ -597,6 +610,7 @@ module.exports = {
   isConfigured,
   isDefinitiveProviderFailure,
   getFallbackPlans,
+  getSelectedProvider,
   getRemaDataPlans,
   getPlans,
   markProviderWalletAvailability,

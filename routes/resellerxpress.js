@@ -5,6 +5,7 @@ const PLANS_CACHE_MS = 15000;
 
 const {
   getPlans,
+  getSelectedProvider,
   getFallbackPlans,
   placeOrder,
   getOrderStatus,
@@ -25,7 +26,9 @@ router.get("/health", (req, res) => {
 
 router.get("/plans", async (req, res) => {
   const network = String(req.query.network || "mtn").toLowerCase();
-  const cached = plansCache.get(network);
+  const selectedProvider = await getSelectedProvider();
+  const cacheKey = `${selectedProvider || "auto"}:${network}`;
+  const cached = plansCache.get(cacheKey);
   if (cached && Date.now() - cached.updatedAt < PLANS_CACHE_MS) {
     return res.json(cached.data);
   }
@@ -35,7 +38,7 @@ router.get("/plans", async (req, res) => {
       return res.json(getFallbackPlans(req.query.network));
     }
     const result = await getPlans(req.query.network, { includeUnavailable: true });
-    plansCache.set(network, { data: result, updatedAt: Date.now() });
+    plansCache.set(cacheKey, { data: result, updatedAt: Date.now() });
     return res.json(result);
   } catch (error) {
     return res.status(500).json({

@@ -79,7 +79,8 @@ async function request(method, path, options = {}) {
 
 async function getBundles(network) {
   const payload = await request("get", "/data-packages", {
-    params: network ? { network: apiNetwork(network) } : {}
+    params: network ? { network: apiNetwork(network) } : {},
+    timeout: 4000
   });
   const data = unwrap(payload);
   const records = Array.isArray(data)
@@ -102,7 +103,7 @@ async function buyData({ phone, network, volumeGb, capacity, requestId }) {
 }
 
 async function getWalletBalance() {
-  return request("get", "/balance");
+  return request("get", "/balance", { timeout: 2500 });
 }
 
 function withdrawalBaseUrl() {

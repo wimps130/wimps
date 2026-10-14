@@ -330,6 +330,7 @@ router.post("/bulk/purchase", async (req, res) => {
       const requestId = `WIMPS_BULK_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const result = await placeProviderOrder(plan.provider, {
         plan_id: plan.id, phone, network: plan.network, volumeGb: plan.volumeGb,
+        providerVolumeInMB: plan.providerVolumeInMB,
         operatorId: plan.operatorId, providerAmount: plan.price || plan.cost || plan.total,
         request_id: requestId, quantity: 1
       });

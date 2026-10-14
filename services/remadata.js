@@ -51,7 +51,7 @@ function normalizeVolume(volume) {
   }
 
   if (text.endsWith("gb")) {
-    return Number(text.replace(/[^\d.]/g, "")) * 1024;
+    return Number(text.replace(/[^\d.]/g, "")) * 1000;
   }
 
   if (/^\d+(\.\d+)?$/.test(text)) {
@@ -92,7 +92,7 @@ function normalizePurchaseInput(body = {}) {
     body.bundle_size ||
     body.bundle ||
     body.capacity ||
-    (volumeInMB ? `${(volumeInMB / 1024).toFixed(volumeInMB % 1024 === 0 ? 0 : 2)}GB` : "");
+    (volumeInMB ? `${(volumeInMB / 1000).toFixed(volumeInMB % 1000 === 0 ? 0 : 2)}GB` : "");
 
   return {
     networkType,
@@ -114,7 +114,7 @@ async function getBundles(network) {
   const response = await axios.get(url, {
     params,
     headers: getHeaders(),
-    timeout: 10000
+    timeout: 4000
   });
 
   return response.data;
@@ -132,7 +132,7 @@ async function getCostPrice(networkType, volumeInMB) {
   const response = await axios.post(
     `${getBaseUrl()}/get-cost-price`,
     { networkType, volumeInMB },
-    { headers: getHeaders() }
+    { headers: getHeaders(), timeout: 4000 }
   );
 
   if (response.data?.status !== "success") {
@@ -181,7 +181,8 @@ async function getWalletBalance() {
   }
 
   const response = await axios.get(`${getBaseUrl()}/wallet-balance`, {
-    headers: getHeaders()
+    headers: getHeaders(),
+    timeout: 2500
   });
 
   return response.data;

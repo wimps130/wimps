@@ -98,7 +98,7 @@ test('provider stock checks compare balance with the provider charge, not the to
 
 test('RemaData bundle listings without prices are enriched from its cost-price endpoint', async () => {
   const axios = require('axios');
-  const { getRemaDataPlans } = require('../services/resellerxpress');
+  const { getRemaDataPlans, placeProviderOrder } = require('../services/resellerxpress');
   const originalGet = axios.get;
   const originalPost = axios.post;
   const originalApiKey = process.env.REMADATA_API_KEY;
@@ -107,20 +107,31 @@ test('RemaData bundle listings without prices are enriched from its cost-price e
   process.env.REMADATA_BASE_URL = 'https://example.test/api';
   axios.get = async (url) => {
     assert.equal(url, 'https://example.test/api/bundles');
-    return { data: [{ network: 'mtn', volumeInMB: 1024, name: '1GB MTN' }] };
+    return { data: [
+      { network: 'mtn', volumeInMB: 1000, name: '1GB MTN' },
+      { network: 'mtn', volumeInMB: 2000, name: '2GB MTN' }
+    ] };
   };
   axios.post = async (url, body) => {
-    assert.equal(url, 'https://example.test/api/get-cost-price');
-    assert.deepEqual(body, { networkType: 'mtn', volumeInMB: 1024 });
-    return { data: { status: 'success', api_price: '4.25' } };
+    if (url.endsWith('/get-cost-price')) {
+      assert.ok([1000, 2000].includes(body.volumeInMB));
+      return { data: { status: 'success', api_price: '9.30' } };
+    }
+    assert.equal(url, 'https://example.test/api/buy-data');
+    assert.equal(body.volumeInMB, 1000);
+    return { data: { status: 'success' } };
   };
 
   try {
-    const [plan] = await getRemaDataPlans('mtn');
-    assert.equal(plan.provider, 'remadata');
-    assert.equal(plan.price, 4.25);
-    assert.equal(plan.volumeGb, 1);
-    assert.equal(plan.available, true);
+    const plans = await getRemaDataPlans('mtn');
+    assert.deepEqual(plans.map((plan) => plan.volumeGb), [1, 2]);
+    assert.deepEqual(plans.map((plan) => plan.providerVolumeInMB), [1000, 2000]);
+    assert.deepEqual(plans.map((plan) => plan.price), [9.3, 9.3]);
+    assert.ok(plans.every((plan) => plan.provider === 'remadata' && plan.available));
+    await placeProviderOrder('remadata', {
+      phone: '0241234567', network: 'mtn', volumeGb: 1, providerVolumeInMB: plans[0].providerVolumeInMB,
+      request_id: 'test-remadata-order'
+    });
   } finally {
     axios.get = originalGet;
     axios.post = originalPost;
