@@ -178,5 +178,89 @@ window.wimpsCheckConfigVersion = async () => {
 };
 document.addEventListener("DOMContentLoaded", () => window.wimpsCheckSession());
 window.setInterval(() => window.wimpsCheckSession(), 60000);
+(() => {
+	const initializeNetworkStatus = () => {
+		if (!document.querySelector('link[href*="responsive.css"]')) return;
+		const screen = document.createElement("section");
+		screen.id = "wims-network-error";
+		screen.className = "wims-network-error";
+		screen.hidden = true;
+		screen.tabIndex = -1;
+		screen.setAttribute("role", "alertdialog");
+		screen.setAttribute("aria-modal", "true");
+		screen.setAttribute("aria-labelledby", "wims-network-title");
+		screen.innerHTML = `
+			<div class="wims-network-panel">
+				<div class="wims-network-brand" aria-hidden="true">W</div>
+				<p class="wims-network-eyebrow">WIMPS CONNECTION STATUS</p>
+				<div class="wims-network-indicator"><span></span> CONNECTION LOST</div>
+				<div class="wims-network-mark" aria-hidden="true"><i></i><i></i><i></i><b>×</b></div>
+				<h1 id="wims-network-title">You're offline.</h1>
+				<p class="wims-network-copy">We can't reach WIMPS right now. Check your internet connection and we'll bring this page back as soon as you're online.</p>
+				<div class="wims-network-actions">
+					<button class="wims-network-retry" type="button">Try again</button>
+					<p id="wims-network-message" role="status" aria-live="polite">Your page is waiting for a connection.</p>
+				</div>
+				<p class="wims-network-footer">CHECK YOUR WI-FI OR MOBILE DATA</p>
+			</div>`;
+		document.body.appendChild(screen);
+
+		const message = screen.querySelector("#wims-network-message");
+		const retry = screen.querySelector(".wims-network-retry");
+		let previousFocus = null;
+		let inertSiblings = [];
+		let reconnectTimer;
+
+		const hideScreen = () => {
+			screen.hidden = true;
+			screen.classList.remove("is-reconnecting");
+			document.body.classList.remove("wims-offline-active");
+			inertSiblings.forEach(([element, wasInert]) => { element.inert = wasInert; });
+			inertSiblings = [];
+			if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+			previousFocus = null;
+		};
+
+		const showScreen = () => {
+			window.clearTimeout(reconnectTimer);
+			if (screen.hidden) {
+				previousFocus = document.activeElement;
+				inertSiblings = [...document.body.children]
+					.filter((element) => element !== screen)
+					.map((element) => [element, element.inert]);
+				inertSiblings.forEach(([element]) => { element.inert = true; });
+			}
+			screen.hidden = false;
+			document.body.classList.add("wims-offline-active");
+			message.textContent = "Your page is waiting for a connection.";
+			retry.focus({ preventScroll: true });
+		};
+
+		retry.addEventListener("click", () => {
+			if (!navigator.onLine) {
+				message.textContent = "Still offline. Check your Wi-Fi or mobile data and try again.";
+				return;
+			}
+			message.textContent = "Connection restored. Returning to your page…";
+			screen.classList.add("is-reconnecting");
+			reconnectTimer = window.setTimeout(hideScreen, 650);
+		});
+
+		window.addEventListener("offline", showScreen);
+		window.addEventListener("online", () => {
+			if (screen.hidden) return;
+			message.textContent = "Connection restored. Returning to your page…";
+			screen.classList.add("is-reconnecting");
+			reconnectTimer = window.setTimeout(hideScreen, 650);
+		});
+		if (!navigator.onLine) showScreen();
+	};
+
+	if (document.readyState === "loading") {
+		document.addEventListener("DOMContentLoaded", initializeNetworkStatus, { once: true });
+	} else {
+		initializeNetworkStatus();
+	}
+})();
 window.setInterval(() => window.wimpsCheckConfigVersion(), 30000);
 window.wimpsCheckConfigVersion();

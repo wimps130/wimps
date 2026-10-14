@@ -117,7 +117,7 @@
                 <label>Mobile money number<input id="datamart-withdrawal-phone" name="phoneNumber" type="tel" inputmode="tel" autocomplete="tel" placeholder="0241234567" pattern="(?:0[0-9]{9}|[+]?233[0-9]{9})" required></label>
                 <label>Recipient name (optional)<input id="datamart-withdrawal-name" name="recipientName" type="text" autocomplete="name" maxlength="100"></label>
             </div>
-            <p class="datamart-withdrawal-note">The amount entered goes to the recipient. DataMart charges its withdrawal fee in addition; the default fee is 2%. Withdrawals must be enabled for your API key by DataMart, with a signing secret configured on the server.</p>
+            <p class="datamart-withdrawal-note">The amount entered goes to the recipient. DataMart charges its withdrawal fee in addition; the default fee is 2%. Withdrawals must be enabled for your API key by DataMart. Configure both DM_API_SECRET (X-API-Secret) and DM_SIGNING_SECRET on the server.</p>
             <button class="primary-button" id="datamart-withdrawal-submit" type="submit" disabled>Send payout</button>
             <p class="datamart-withdrawal-status" id="datamart-withdrawal-status" role="status" aria-live="polite">Load DataMart limits before withdrawing.</p>
         </form>

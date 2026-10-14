@@ -248,7 +248,9 @@
       grossTotal,
       total,
       referralDiscount,
-      wimpBalance: 0
+      wimpBalance: 0,
+      wimpMinimum: 0.01,
+      wimpMaximumDiscount: 10
     };
 
     const bundleLabel = Number(plan.volumeGb) > 0 ? formatVolumeLabel(Number(plan.volumeGb)) : (plan.name || `${plan.volume || plan.volume_mb || "Bundle"}`);
@@ -260,13 +262,20 @@
     document.getElementById("modal-total").textContent = `GHS ${total.toFixed(2)}`;
     updatePaymentButtons();
     const wimpInput = document.getElementById("wimp-discount");
-    if (wimpInput) wimpInput.value = "0";
+    if (wimpInput) {
+      wimpInput.value = "0";
+      wimpInput.classList.remove("checkout-input-invalid");
+      wimpInput.setAttribute("aria-invalid", "false");
+    }
+    validatePhoneInput();
     fetch(`${API_BASE}/wimp/wallet`, { headers: window.wimpsAuthHeaders() }).then((response) => response.ok ? response.json() : null).then((data) => {
       if (!data) return;
       currentPurchase.wimpBalance = Number(data.wallet?.balance || 0);
+      currentPurchase.wimpMinimum = Number(data.rules?.minimumRedemptionUnits ?? 1) / 100;
+      currentPurchase.wimpMaximumDiscount = Number(data.rules?.maximumDiscountUnits ?? 1000) / 100;
       const help = document.getElementById("wimp-balance-help");
       if (help) help.textContent = `Available: ${currentPurchase.wimpBalance.toFixed(2)} WIMP`;
-      if (wimpInput) wimpInput.max = String(Math.min(currentPurchase.wimpBalance, Math.max(0, currentPurchase.grossTotal - currentPurchase.referralDiscount)));
+      updatePurchaseTotal();
     }).catch(() => {});
 
     const checkoutModal = document.getElementById("checkout-modal");
@@ -278,15 +287,59 @@
 
   function updatePurchaseTotal() {
     const p = currentPurchase;
-    if (!p) return;
+    if (!p) return true;
     const input = document.getElementById("wimp-discount");
-    const requested = Math.max(0, Number(input?.value || 0));
-    const discount = Math.min(requested, Number(p.wimpBalance || 0), Math.max(0, p.grossTotal - p.referralDiscount));
-    p.wimpDiscount = Number(discount.toFixed(2));
+    if (!input) return true;
+    const help = document.getElementById("wimp-balance-help");
+    const rawAmount = input.value.trim();
+    const maxAllowed = Math.max(0, Math.min(
+      Number(p.wimpBalance || 0),
+      Number(p.wimpMaximumDiscount || 0),
+      Math.max(0, p.grossTotal - p.referralDiscount)
+    ));
+    input.max = maxAllowed.toFixed(2);
+
+    let requested = 0;
+    let error = "";
+    if (rawAmount && !/^(?:\d+(?:\.\d{0,2})?|\.\d{1,2})$/.test(rawAmount)) {
+      error = "Enter a valid WIMP amount with up to 2 decimal places.";
+    } else if (rawAmount) {
+      requested = Number(rawAmount);
+      if (!Number.isFinite(requested)) error = "Enter a valid WIMP amount.";
+      else if (requested > 0 && requested < p.wimpMinimum) error = `Minimum redemption is ${p.wimpMinimum.toFixed(2)} WIMP.`;
+      else if (requested > maxAllowed) error = `Maximum you can use is ${maxAllowed.toFixed(2)} WIMP.`;
+    }
+
+    input.classList.toggle("checkout-input-invalid", Boolean(error));
+    input.setAttribute("aria-invalid", String(Boolean(error)));
+    if (help) {
+      help.textContent = error || `Available: ${Number(p.wimpBalance || 0).toFixed(2)} WIMP`;
+      help.classList.toggle("checkout-input-error", Boolean(error));
+    }
+
+    p.wimpDiscount = error ? 0 : Number(requested.toFixed(2));
     p.total = Number((p.grossTotal - p.referralDiscount - p.wimpDiscount).toFixed(2));
-    if (input) input.value = p.wimpDiscount.toFixed(2);
     document.getElementById("modal-total").textContent = `GHS ${p.total.toFixed(2)}`;
     updatePaymentButtons();
+    return !error;
+  }
+
+  function validatePhoneInput(showRequired = false) {
+    const input = document.getElementById("phone-number");
+    const hint = document.getElementById("phone-hint");
+    if (!input) return null;
+    const value = input.value.trim();
+    const phoneCheck = value ? window.wimsPhone.validate(value, getCurrentNetwork()) : null;
+    const error = !value
+      ? (showRequired ? "Enter a phone number." : "")
+      : phoneCheck.valid ? "" : phoneCheck.message;
+    input.classList.toggle("checkout-input-invalid", Boolean(error));
+    input.setAttribute("aria-invalid", String(Boolean(error)));
+    if (hint) {
+      hint.textContent = error || "Your bundle will be delivered to this number";
+      hint.classList.toggle("checkout-input-error", Boolean(error));
+    }
+    return phoneCheck?.valid ? phoneCheck.value : null;
   }
 
   function updatePaymentButtons() {
@@ -307,9 +360,9 @@
     const p = currentPurchase;
     if (!p) return;
 
-    const phone = document.getElementById("phone-number").value.trim();
-    const phoneCheck = window.wimsPhone.validate(phone, "airteltigo");
-    if (!phoneCheck.valid) return window.wimsNotice?.(phoneCheck.message, "warning");
+    const phone = validatePhoneInput(true);
+    const validWimpAmount = updatePurchaseTotal();
+    if (!phone || !validWimpAmount) return;
 
     try {
       const res = await fetch(`${API_BASE}/wallet/buy`, {
@@ -353,13 +406,12 @@
   async function buyWithPaystack() {
     const p = currentPurchase;
     if (!p) return;
+    const phone = validatePhoneInput(true);
+    const validWimpAmount = updatePurchaseTotal();
+    if (!phone || !validWimpAmount) return;
     if (Number(p.total || 0) <= 0) return buyWithWallet();
 
     if (!(await ensurePaymentConfig())) return;
-
-    const phone = document.getElementById("phone-number").value.trim();
-    const phoneCheck = window.wimsPhone.validate(phone, "airteltigo");
-    if (!phoneCheck.valid) return window.wimsNotice?.(phoneCheck.message, "warning");
 
     const handler = PaystackPop.setup({
       key: PAYSTACK_KEY,
@@ -511,6 +563,8 @@
 
     document.getElementById("buy-wallet-btn")?.addEventListener("click", buyWithWallet);
     document.getElementById("wimp-discount")?.addEventListener("input", updatePurchaseTotal);
+    document.getElementById("phone-number")?.addEventListener("input", () => validatePhoneInput());
+    document.getElementById("phone-number")?.addEventListener("blur", () => validatePhoneInput());
     document.getElementById("buy-paystack-btn")?.addEventListener("click", buyWithPaystack);
     document.getElementById("deposit-paystack")?.addEventListener("click", depositWithPaystack);
     document.getElementById("modal-close-btn")?.addEventListener("click", closeCheckoutModal);
