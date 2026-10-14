@@ -96,6 +96,41 @@ test('provider stock checks compare balance with the provider charge, not the to
   }
 });
 
+test('RemaData bundle listings without prices are enriched from its cost-price endpoint', async () => {
+  const axios = require('axios');
+  const { getRemaDataPlans } = require('../services/resellerxpress');
+  const originalGet = axios.get;
+  const originalPost = axios.post;
+  const originalApiKey = process.env.REMADATA_API_KEY;
+  const originalBaseUrl = process.env.REMADATA_BASE_URL;
+  process.env.REMADATA_API_KEY = 'test-key';
+  process.env.REMADATA_BASE_URL = 'https://example.test/api';
+  axios.get = async (url) => {
+    assert.equal(url, 'https://example.test/api/bundles');
+    return { data: [{ network: 'mtn', volumeInMB: 1024, name: '1GB MTN' }] };
+  };
+  axios.post = async (url, body) => {
+    assert.equal(url, 'https://example.test/api/get-cost-price');
+    assert.deepEqual(body, { networkType: 'mtn', volumeInMB: 1024 });
+    return { data: { status: 'success', api_price: '4.25' } };
+  };
+
+  try {
+    const [plan] = await getRemaDataPlans('mtn');
+    assert.equal(plan.provider, 'remadata');
+    assert.equal(plan.price, 4.25);
+    assert.equal(plan.volumeGb, 1);
+    assert.equal(plan.available, true);
+  } finally {
+    axios.get = originalGet;
+    axios.post = originalPost;
+    if (originalApiKey === undefined) delete process.env.REMADATA_API_KEY;
+    else process.env.REMADATA_API_KEY = originalApiKey;
+    if (originalBaseUrl === undefined) delete process.env.REMADATA_BASE_URL;
+    else process.env.REMADATA_BASE_URL = originalBaseUrl;
+  }
+});
+
 test('resellerxpress plans should return a visible fallback list when upstream plans are empty', async () => {
   const { getPlans } = require('../services/resellerxpress');
   const plans = await getPlans('mtn');

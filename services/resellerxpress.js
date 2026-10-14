@@ -2,11 +2,13 @@ const axios = require("axios");
 const AdminSetting = require("../models/AdminSetting");
 const datamart = require("./datamart");
 const remadata = require("./remadata");
-const { getBundles: getRemaDataBundles, buyData: buyRemaData, isConfigured: isRemaDataConfigured } = remadata;
+const { getBundles: getRemaDataBundles, getCostPrice: getRemaDataCostPrice, buyData: buyRemaData, isConfigured: isRemaDataConfigured } = remadata;
 const { getConfiguredSmsFee, getSmsPricing } = require("./sendcomms");
 
 let handlingFees = { mtn: 1, telecel: 1, airteltigo: 1 };
 let selectedProvider = "";
+const configuredProviderFee = Number(process.env.DEFAULT_PROVIDER_FEE);
+const DEFAULT_PROVIDER_FEE = Number.isFinite(configuredProviderFee) && configuredProviderFee >= 0 ? configuredProviderFee : 0.5;
 
 function getBaseUrl() {
   return process.env.RESSELLERXPRESS_BASE_URL || "https://resellerxpress.shop/api/v1";
@@ -229,7 +231,19 @@ async function getRemaDataPlans(network) {
             ? response.result
             : [];
 
-    return rawPlans.map((plan) => normalizePlanRecord(plan, normalizedNetwork || network, "remadata"));
+    return await Promise.all(rawPlans.map(async (plan) => {
+      const normalized = normalizePlanRecord(plan, normalizedNetwork || network, "remadata");
+      if (normalized.price > 0 || !Number.isFinite(normalized.volumeGb) || normalized.volumeGb < 1) return normalized;
+
+      const volumeInMB = Math.round(normalized.volumeGb * 1024);
+      try {
+        const price = await getRemaDataCostPrice(normalized.network, volumeInMB);
+        return normalizePlanRecord({ ...plan, price, total: Number((price + normalized.fee).toFixed(2)) }, normalized.network, "remadata");
+      } catch (error) {
+        console.warn(`RemaData cost lookup failed for ${normalized.network} ${volumeInMB}MB bundle:`, error.message);
+        return normalized;
+      }
+    }));
   } catch (error) {
     console.warn("RemaData API failed, skipping provider:", error.message);
     return [];
@@ -583,6 +597,7 @@ module.exports = {
   isConfigured,
   isDefinitiveProviderFailure,
   getFallbackPlans,
+  getRemaDataPlans,
   getPlans,
   markProviderWalletAvailability,
   placeOrder,
