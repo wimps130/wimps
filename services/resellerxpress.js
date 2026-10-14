@@ -410,7 +410,7 @@ async function markProviderWalletAvailability(plans) {
   return plans.map((plan) => {
     const balance = balanceByProvider.get(plan.provider);
     if (balance === null || balance === undefined) return plan;
-    const required = Number(plan.total || plan.cost || plan.price || 0);
+    const required = Number(plan.price || plan.cost || plan.total || 0);
     return balance >= required ? plan : { ...plan, available: false, purchasable: false };
   });
 }
@@ -584,6 +584,7 @@ module.exports = {
   isDefinitiveProviderFailure,
   getFallbackPlans,
   getPlans,
+  markProviderWalletAvailability,
   placeOrder,
   placeProviderOrder,
   getOrderStatus,

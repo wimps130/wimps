@@ -77,6 +77,25 @@ test('bundle handling fee is fixed per network', () => {
   assert.equal(threeGb.sellingPrice, 11.5, 'three GB should add three handling fees');
 });
 
+test('provider stock checks compare balance with the provider charge, not the total', async () => {
+  const service = require('../services/resellerxpress');
+  const originalIsConfigured = service.isConfigured;
+  const originalGetWalletBalance = service.getWalletBalance;
+  service.isConfigured = () => true;
+  service.getWalletBalance = async () => ({ balance: 4.25 });
+
+  try {
+    const [plan] = await service.markProviderWalletAvailability([{
+      provider: 'resellerxpress', price: 4, cost: 4, total: 4.5, available: true, purchasable: true
+    }]);
+    assert.equal(plan.available, true, 'wallet balance covers the actual provider charge');
+    assert.equal(plan.purchasable, true, 'provider fee must not incorrectly mark this bundle unavailable');
+  } finally {
+    service.isConfigured = originalIsConfigured;
+    service.getWalletBalance = originalGetWalletBalance;
+  }
+});
+
 test('resellerxpress plans should return a visible fallback list when upstream plans are empty', async () => {
   const { getPlans } = require('../services/resellerxpress');
   const plans = await getPlans('mtn');
